@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { usePanelTabs, openPanelView, __resetPanelTabs } from '../hooks/usePanelTabs'
+import { usePanelTabs, openPanelView, __resetPanelTabs, __reloadPersisted } from '../hooks/usePanelTabs'
 
 // The panel-tab store is module-level + localStorage-persisted (so the
 // strip survives ChatPage route unmounts and reloads). Reset it before each
@@ -179,26 +179,45 @@ describe('usePanelTabs', () => {
     expect(result.current.activeTab?.modified).toBe('mod-2')
   })
 
-  it('openFolder keys on folder: so a directory never collides with a file tab', () => {
+  it('openFolder re-targets the one pinned Folder tab instead of stacking per directory', () => {
     const { result } = renderHook(() => usePanelTabs())
     act(() => result.current.openFolder('/Users/me/workspace/KiroCrew', 'chat-a'))
+    // The pinned singleton, not a path-keyed tab: its id IS the kind, so it sits
+    // in the non-closable pinned block and carries the static localised label.
     expect(result.current.activeTab).toMatchObject({
-      id: 'folder:/Users/me/workspace/KiroCrew', kind: 'folder', title: 'KiroCrew', slot: 'chat-a',
+      id: 'folder', kind: 'folder', title: 'Folder', path: '/Users/me/workspace/KiroCrew', slot: 'chat-a',
     })
-    // Re-opening the same directory focuses the existing tab, not a duplicate.
-    act(() => result.current.openFolder('/Users/me/workspace/KiroCrew'))
+
+    // A reference to a DIFFERENT directory moves the same tab rather than adding one.
+    act(() => result.current.openFolder('/tmp/other'))
     expect(result.current.tabs).toHaveLength(1)
-    // A same-named FILE is a separate tab — the id prefixes keep them apart.
-    act(() => result.current.openFile('/Users/me/workspace/KiroCrew', 'x'))
-    expect(result.current.tabs.map(t => t.id)).toEqual([
-      'folder:/Users/me/workspace/KiroCrew',
-      'file:/Users/me/workspace/KiroCrew',
-    ])
+    expect(result.current.activeTab).toMatchObject({ id: 'folder', path: '/tmp/other' })
+
+    // A same-named FILE is still its own tab — the id prefixes keep them apart.
+    act(() => result.current.openFile('/tmp/other', 'x'))
+    expect(result.current.tabs.map(t => t.id)).toEqual(['folder', 'file:/tmp/other'])
   })
 
-  it('titles a folder tab by its own name even with a trailing slash', () => {
+  it('drops legacy path-keyed folder tabs when rehydrating a persisted strip', () => {
+    // Nothing mints `folder:<path>` any more, so one restored from an older
+    // build is an orphan the user could close but never bring back.
+    localStorage.setItem('mc-panel-tabs:chat-a', JSON.stringify({
+      activeId: 'folder:/Users/me/old',
+      tabs: [
+        { id: 'logs', kind: 'logs', title: 'Logs' },
+        { id: 'folder:/Users/me/old', kind: 'folder', title: 'old', path: '/Users/me/old' },
+      ],
+    }))
+    __reloadPersisted()
+    const { result } = renderHook(() => usePanelTabs('chat-a'))
+    expect(result.current.tabs.map(t => t.id)).toEqual(['logs'])
+    // Focus pointed at the dropped tab, so it falls back to a surviving one.
+    expect(result.current.activeId).toBe('logs')
+  })
+
+  it('titles a terminal tab by its cwd even with a trailing slash', () => {
     const { result } = renderHook(() => usePanelTabs())
-    act(() => result.current.openFolder('/a/b/'))
+    act(() => { result.current.openTerminal({ cwd: '/a/b/' }) })
     // Naive split('/').pop() yields '' here and would fall back to the full path.
     expect(result.current.activeTab?.title).toBe('b')
   })
@@ -393,8 +412,8 @@ describe('usePanelTabs — per-slot isolation', () => {
     const { result } = renderHook(() => usePanelTabs())
     act(() => result.current.openView('logs'))
     act(() => result.current.syncPinned(['files', 'changes']))
-    // Pinned views are ordered per PINNED_VIEWS (changes, artifacts, files),
-    // always ahead of dynamic tabs.
+    // Pinned views are ordered per PINNED_VIEWS (changes, artifacts, files,
+    // folder), always ahead of dynamic tabs.
     expect(result.current.tabs.map(t => t.id)).toEqual(['changes', 'files', 'logs'])
   })
 

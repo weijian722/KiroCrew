@@ -5,13 +5,13 @@ import { safeSetItem } from '../utils/safeStorage'
 import { secureRandomId } from '../utils/secureId'
 
 /** Singleton "view" tabs (opened from the + menu, one instance each). */
-export type ViewKind = 'changes' | 'issues' | 'links' | 'files' | 'artifacts' | 'subagents' | 'workflows' | 'logs' | 'context' | 'side' | 'browser' | 'git' | 'summary' | 'pins'
+export type ViewKind = 'changes' | 'issues' | 'links' | 'files' | 'artifacts' | 'subagents' | 'workflows' | 'logs' | 'context' | 'side' | 'browser' | 'git' | 'summary' | 'pins' | 'folder'
 /** All tab kinds: singleton views + on-demand document/terminal tabs. */
 /** `app` hosts an MCP App (a sandboxed iframe with a live JSON-RPC bridge).
  *  It is deliberately a TabKind and NOT a ViewKind: SidePanel unmounts
  *  category views on tab switch (`if (!isActive) return null`), which would
  *  reload the app's iframe and destroy whatever the user has drawn. */
-export type TabKind = ViewKind | 'file' | 'diff' | 'artifact' | 'terminal' | 'folder' | 'app'
+export type TabKind = ViewKind | 'file' | 'diff' | 'artifact' | 'terminal' | 'app'
 
 /** Views that are AUTO-managed by content (see `syncPinned`): they appear —
  *  pinned to the front, non-closable, and absent from the + menu — only while
@@ -29,8 +29,16 @@ export type TabKind = ViewKind | 'file' | 'diff' | 'artifact' | 'terminal' | 'fo
  *  follows the Issues shape exactly: the + menu, or opened automatically by
  *  ChatPage on a session's FIRST pin. A session pinned before the tab existed
  *  reaches it through the + menu, the same zero option Issues gives pre-existing
- *  issue links; that is what keeps this free of any reveal-claim mechanism. */
-export const PINNED_VIEWS: ViewKind[] = ['changes', 'artifacts', 'files']
+ *  issue links; that is what keeps this free of any reveal-claim mechanism.
+ *
+ *  `folder` IS pinned, and for a reason none of the others share: it is the
+ *  chat's ONE directory surface. A directory reference re-targets it (see
+ *  `openFolder`) rather than minting a tab per directory, which is the rule
+ *  FolderPanel already applies to clicking a subdirectory inside itself. Pinning
+ *  is what makes that safe: a single surface that could be closed would leave a
+ *  directory reference with nowhere to open, reachable again only from a mention
+ *  still in the transcript. */
+export const PINNED_VIEWS: ViewKind[] = ['changes', 'artifacts', 'files', 'folder']
 
 export interface PanelTab {
   id: string
@@ -119,6 +127,7 @@ const VIEW_TITLE_KEY: Record<ViewKind, string> = {
   git: 'hooks.usePanelTabs.git',
   summary: 'hooks.usePanelTabs.summary',
   pins: 'hooks.usePanelTabs.pins',
+  folder: 'hooks.usePanelTabs.folder',
 }
 
 /** Localised strip label for a singleton view. */
@@ -402,7 +411,17 @@ function loadPersisted(): BySlot {
       try {
         const b = JSON.parse(localStorage.getItem(k) ?? 'null') as Partial<Bucket> | null
         if (b && Array.isArray(b.tabs)) {
-          out[slot] = { tabs: b.tabs as PanelTab[], activeId: (b.activeId as string | null) ?? null }
+          // A strip persisted before directory browsing collapsed onto the single
+          // pinned Folder tab can hold path-keyed `folder:<path>` tabs. Nothing
+          // creates them now, so a rehydrated one is an orphan the user could
+          // close but never restore — drop them, and refocus if the stored focus
+          // was one of them.
+          const tabs = (b.tabs as PanelTab[]).filter(t => !(t.kind === 'folder' && t.id !== 'folder'))
+          const storedActive = (b.activeId as string | null) ?? null
+          const activeId = tabs.some(t => t.id === storedActive)
+            ? storedActive
+            : (tabs.length ? tabs[tabs.length - 1].id : null)
+          out[slot] = { tabs, activeId }
         }
       } catch { /* skip malformed bucket */ }
     }
@@ -451,6 +470,14 @@ export function __resetPanelTabs(): void {
       for (const k of doomed) localStorage.removeItem(k)
     } catch { /* ignore */ }
   }
+  for (const cb of listeners) cb()
+}
+
+/** Test-only: re-run rehydration from localStorage into the module store, so a
+ *  test can seed a persisted strip and assert what `loadPersisted` makes of it
+ *  (the import-time call has already run by then). */
+export function __reloadPersisted(): void {
+  store = loadPersisted()
   for (const cb of listeners) cb()
 }
 
@@ -560,11 +587,17 @@ export function usePanelTabs(slotKey: string | null = null) {
     upsert({ id: `diff:${path}`, kind: 'diff', title: i18nT('hooks.usePanelTabs.diff', { name: basename(path) }), path, modified, original })
   }, [upsert])
 
-  /** Open a directory listing as its own tab. Keyed `folder:${path}` so a
-   *  directory and a same-named file never collide on id, and so re-opening the
-   *  same directory focuses the existing tab instead of stacking duplicates. */
+  /** Point the pinned Folder tab at a directory and focus it.
+   *
+   *  There is exactly ONE directory surface per chat, and a directory reference
+   *  re-targets it — the same rule FolderPanel already applies when you click a
+   *  subdirectory inside it, rather than spawning a tab per directory. The tab is
+   *  the pinned singleton (`id === 'folder'`), so it is never closable and never
+   *  needs re-opening; `upsert` creates it when a reference arrives before
+   *  `syncPinned` has run. FolderPanel re-syncs on a `path` change and clears a
+   *  search typed for the previous directory. */
   const openFolder = useCallback((path: string, slot: string | null = null) => {
-    upsert({ id: `folder:${path}`, kind: 'folder', title: basename(path), path, slot })
+    upsert({ id: 'folder', kind: 'folder', title: viewTitle('folder'), path, slot })
   }, [upsert])
 
   /** Open (or refocus) the app tab hosting one MCP App render. Keyed by

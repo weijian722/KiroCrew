@@ -78,6 +78,7 @@ export const NEW_MENU_LABEL_KEY: Record<ViewKind, string> = {
   git: 'pages.chat.sidePanel.menu_git',
   summary: 'pages.chat.sidePanel.menu_summary',
   pins: 'pages.chat.sidePanel.menu_pins',
+  folder: 'pages.chat.sidePanel.menu_folder',
 }
 
 export const NEW_MENU_DESC_KEY: Record<ViewKind, string> = {
@@ -95,6 +96,7 @@ export const NEW_MENU_DESC_KEY: Record<ViewKind, string> = {
   git: 'pages.chat.sidePanel.menu_git_desc',
   summary: 'pages.chat.sidePanel.menu_summary_desc',
   pins: 'pages.chat.sidePanel.menu_pins_desc',
+  folder: 'pages.chat.sidePanel.menu_folder_desc',
 }
 
 /** Views offered by the + menu, in the three semantic groups the menu renders
@@ -120,8 +122,8 @@ export const NEW_MENU_DESC_KEY: Record<ViewKind, string> = {
  *  without placing it in a group fails rather than silently dropping it. */
 const NEW_MENU_GROUPS: { id: string; items: { kind: ViewKind; icon: ReactNode }[] }[] = [
   // Session output — what this chat referenced or produced. (Changes / Files /
-  // Artifacts are auto-pinned and filtered out below; they are listed here so
-  // this table stays the complete catalog of views.)
+  // Artifacts / Folder are auto-pinned and filtered out below; they are listed
+  // here so this table stays the complete catalog of views.)
   {
     id: 'session-output',
     items: [
@@ -130,6 +132,7 @@ const NEW_MENU_GROUPS: { id: string; items: { kind: ViewKind; icon: ReactNode }[
       { kind: 'changes', icon: <GitPullRequest size={15} /> },
       { kind: 'issues', icon: <CircleDot size={15} /> },
       { kind: 'files', icon: <Folders size={15} /> },
+      { kind: 'folder', icon: <Folder size={15} /> },
       { kind: 'links', icon: <LinkIcon size={15} /> },
       { kind: 'artifacts', icon: <Component size={15} /> },
       { kind: 'subagents', icon: <Bot size={15} /> },
@@ -169,8 +172,8 @@ const DEV_ONLY_VIEWS = new Set<ViewKind>(['logs', 'context'])
 /** Which `+`-menu entries are offered, given the gates that hide entries:
  *  the diagnostics views (Logs, Context breakdown) are hidden unless Developer
  *  Mode is on, and **Summary is hidden while session summaries are disabled**.
- *  The auto-managed pinned views (Changes / Files / Artifacts) are never listed;
- *  they appear on their own when they have content.
+ *  The auto-managed pinned views (Changes / Files / Artifacts / Folder) are
+ *  never listed; they appear on their own when they have content.
  *
  *  Summary is gated because the feature is opt-in and its settings toggle ships
  *  separately: advertising the entry while `session_summary.enabled` is false
@@ -398,16 +401,16 @@ export default function SidePanel({
   const summaryEnabled = summaryMeta?.enabled !== false
   // The + menu / empty-state launcher hide Terminal when the feature is
   // disabled server-side and Context breakdown unless Developer Mode is on, and
-  // never list the auto-managed pinned views (Changes / Files / Artifacts) —
-  // those appear on their own when they have content (see the syncPinned
-  // reconcile below).
+  // never list the auto-managed pinned views (Changes / Files / Artifacts /
+  // Folder) — those appear on their own when they have content (see the
+  // syncPinned reconcile below).
   const menuSections = newMenuSections({ devMode, terminalEnabled, summaryEnabled })
   // The empty-state launcher shows the same entries flat: its two-column grid
   // has nowhere to put a separator, but it must not disagree with the menu
   // about ORDER, so it reads the groups rather than its own list.
   const menuItems = menuSections.flatMap(section => section.items)
-  // Files / Artifacts / Changes are ALWAYS present — pinned to the front,
-  // non-closable, and never in the + menu — regardless of whether they
+  // Files / Artifacts / Changes / Folder are ALWAYS present — pinned to the
+  // front, non-closable, and never in the + menu — regardless of whether they
   // currently have content.
   useEffect(() => { syncPinned(PINNED_VIEWS) }, [syncPinned])
   // Split the strip: pinned (fixed, non-closable) vs. dynamic (draggable).
@@ -545,9 +548,9 @@ export default function SidePanel({
           not a flat bordered bar. side-panel-strip punches the strip out of the
           Electron window-drag region (see index.css) so chips receive events. */}
       <div className="side-panel-strip flex items-center gap-1.5 shrink-0 p-2 rounded-tl-xl bg-bg-elevated">
-        {/* Pinned views (Changes / Files / Artifacts): always present, fixed at
-            the front, non-closable, not draggable, compact. Wrapped in a
-            tight-gap group so the three sit closer together than the strip's
+        {/* Pinned views (Changes / Files / Artifacts / Folder): always present,
+            fixed at the front, non-closable, not draggable, compact. Wrapped in
+            a tight-gap group so they sit closer together than the strip's
             default spacing. */}
         <div className="flex items-center gap-1.5 shrink-0">
           {pinnedTabs.map(t => (
@@ -765,7 +768,7 @@ export default function SidePanel({
                 onDiskContent={(c) => patchTab(t.id, { content: c, savedContent: c })}
                 onDiffModeChange={(diffMode) => patchTab(t.id, { diffMode })}
                 onRevealConsumed={() => patchTab(t.id, { revealLine: undefined })}
-                onPathChange={(p) => patchTab(t.id, { path: p, title: p.replace(/\/+$/, '').split('/').pop() || p })}
+                onPathChange={(p) => patchTab(t.id, { path: p })}
                 onFileSave={onFileSave}
                 onFileOpen={onFileOpen}
                 onAddToContext={onAddToContext}
@@ -968,7 +971,11 @@ function TabBody({ tab, active, slot, projectDir, onClose, onContentChange, onDi
   if (tab.kind === 'folder') {
     return (
       <FolderPanel
-        path={tab.path || ''}
+        // The pinned singleton is created by `syncPinned`, which mints view tabs
+        // with no `path` (no other view needs one), so it opens on the chat's
+        // project dir. The moment the user navigates, `onPathChange` stamps the
+        // path onto the tab record and it persists from then on.
+        path={tab.path || projectDir || ''}
         onClose={onClose}
         onFileOpen={onFileOpen}
         onPathChange={onPathChange}
@@ -1068,8 +1075,8 @@ function DraggableTabItem({ tab, active, separator, instantLayout, onSelect, onC
 }
 
 function TabChip({ tab, active, onSelect, onClose, closable = true, pinned = false }: { tab: PanelTab; active: boolean; onSelect: () => void; onClose: () => void; closable?: boolean; pinned?: boolean }) {
-  // Pinned views (Changes / Files / Artifacts) are icon-only when inactive and
-  // expand to icon + label when active — a hybrid that keeps the strip compact
+  // Pinned views (Changes / Files / Artifacts / Folder) are icon-only when
+  // inactive and expand to icon + label when active — a hybrid that keeps the strip compact
   // while still naming the current view. Dynamic (document / terminal) tabs
   // always show their label. Icon-only chips MUST carry an accessible name.
   const showLabel = active || !pinned

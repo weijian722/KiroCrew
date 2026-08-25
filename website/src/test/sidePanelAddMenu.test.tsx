@@ -130,7 +130,7 @@ describe('newMenuSections', () => {
     // view added to NEW_MENU_LABEL_KEY without being placed in a group — or
     // placed in two — fails here instead of quietly vanishing from the menu.
     const flat = kinds({ devMode: true, terminalEnabled: true }).flat()
-    const pinned = ['changes', 'files', 'artifacts']
+    const pinned = ['changes', 'files', 'artifacts', 'folder']
     const catalogued = Object.keys(NEW_MENU_LABEL_KEY).filter(k => !pinned.includes(k))
     expect([...flat].sort()).toEqual([...catalogued].sort())
     expect(new Set(flat).size).toBe(flat.length)
